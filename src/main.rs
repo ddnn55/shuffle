@@ -608,7 +608,7 @@ fn apply_control_action(player: &mut Player, action: ControlAction) -> Result<()
 
 #[cfg(target_os = "macos")]
 fn start_media_remote_client() -> Option<MediaRemoteClient> {
-    let helper_path = option_env!("SHUFFLE_MEDIA_HELPER")?;
+    let helper_path = media_remote_helper_path()?;
     let mut child = Command::new(helper_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -668,6 +668,26 @@ fn start_media_remote_client() -> Option<MediaRemoteClient> {
 #[cfg(not(target_os = "macos"))]
 fn start_media_remote_client() -> Option<MediaRemoteClient> {
     None
+}
+
+#[cfg(target_os = "macos")]
+fn media_remote_helper_path() -> Option<PathBuf> {
+    if let Some(packaged_path) = packaged_media_remote_helper_path() {
+        if packaged_path.exists() {
+            return Some(packaged_path);
+        }
+    }
+
+    let build_path = PathBuf::from(option_env!("SHUFFLE_MEDIA_HELPER")?);
+    build_path.exists().then_some(build_path)
+}
+
+#[cfg(target_os = "macos")]
+fn packaged_media_remote_helper_path() -> Option<PathBuf> {
+    let executable = env::current_exe().ok()?;
+    let bin_dir = executable.parent()?;
+    let prefix_dir = bin_dir.parent()?;
+    Some(prefix_dir.join("libexec").join("media_remote_helper"))
 }
 
 fn sanitize_remote_field(value: &str) -> String {

@@ -10,6 +10,11 @@ class Shuffle < Formula
 
   def install
     system "cargo", "install", *std_cargo_args(path: ".")
+    system "swiftc", "macos/MediaRemoteHelper.swift",
+                    "-O",
+                    "-framework", "Foundation",
+                    "-framework", "MediaPlayer",
+                    "-o", libexec/"media_remote_helper"
   end
 
   test do

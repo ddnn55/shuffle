@@ -1,0 +1,12 @@
+[package]
+name = "shuffle"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+chrono = "0.4"
+crossterm = "0.29"
+id3 = "1.14"
+rand = "0.8.5"
+rodio = "0.20.1"

@@ -42,14 +42,14 @@ If you omit the path, `shuffle` scans the current directory for MP3 files.
 Public install from the tap:
 
 ```bash
-brew install ddnn55/shuffle/shuffle
+brew install ddnn55/tap/shuffle
 ```
 
 Or tap first and then install:
 
 ```bash
-brew tap ddnn55/shuffle
-brew install ddnn55/shuffle/shuffle
+brew tap ddnn55/tap
+brew install ddnn55/tap/shuffle
 ```
 
 For local development against this checkout, use a symlinked local tap:
@@ -69,7 +69,7 @@ shuffle /path/to/music-folder
 Useful commands:
 
 ```bash
-brew reinstall ddnn55/shuffle/shuffle
+brew reinstall ddnn55/tap/shuffle
 brew uninstall shuffle
 ```
 

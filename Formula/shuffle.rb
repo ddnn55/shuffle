@@ -9,14 +9,13 @@ class Shuffle < Formula
   depends_on :macos
 
   def install
-    system "cargo", "build", "--release", "--bin", "shuffle"
-    bin.install "target/release/shuffle"
+    system "cargo", "install", *std_cargo_args(path: ".")
   end
 
   test do
     assert_match(
       "No mp3 files found.",
-      shell_output("#{bin}/shuffle 2>&1", 1)
+      shell_output("#{bin}/shuffle 2>&1", 1),
     )
   end
 end

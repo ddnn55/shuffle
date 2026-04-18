@@ -1,6 +1,6 @@
 class Shuffle < Formula
   desc "Command-line MP3 player with shuffle playback and arrow-key controls"
-  homepage "https://local-only.invalid/shuffle"
+  homepage "https://github.com/ddnn55/shuffle"
   url "file://#{File.expand_path("..", __dir__)}"
   version "0.1.0"
   sha256 :no_check
@@ -9,7 +9,7 @@ class Shuffle < Formula
   depends_on :macos
 
   def install
-    system "cargo", "build", "--release"
+    system "cargo", "build", "--release", "--bin", "shuffle"
     bin.install "target/release/shuffle"
   end
 

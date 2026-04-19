@@ -18,9 +18,9 @@ The iOS app in this repository is experimental and is not part of the Homebrew d
 ## Requirements
 
 - macOS
-- Apple developer tools with `swiftc` available
+- Rust toolchain for source builds
 
-The project uses Rust for the main binary and compiles a small macOS Swift helper during the build.
+The project uses Rust for playback, terminal UI, and macOS media-remote integration.
 
 ## Run From Source
 

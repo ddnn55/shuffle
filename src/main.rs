@@ -2,9 +2,9 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Stdout, Write, stderr, stdout};
+use std::sync::OnceLock;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,7 +23,15 @@ use id3::{Tag, TagLike};
 use rand::seq::SliceRandom;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
+#[cfg(target_os = "macos")]
+mod macos_media;
+
+#[cfg(target_os = "macos")]
+use macos_media::start_media_remote_client;
+
 const STATE_FILE_NAME: &str = "state";
+const APP_LABEL: &str = concat!("shuffle v", env!("CARGO_PKG_VERSION"));
+static MEDIA_EVENTS_LOG: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 #[derive(Debug)]
 enum PlayerError {
@@ -182,42 +190,8 @@ enum ControlAction {
     Next,
 }
 
-struct MediaRemoteClient {
-    updates_tx: Sender<String>,
-    actions_rx: Receiver<ControlAction>,
-    child: Child,
-}
-
-impl MediaRemoteClient {
-    fn sync_state(&self, player: &mut Player) {
-        let details = player.read_current_details();
-        let line = format!(
-            "STATE\t{}\t{:.3}\t{:.3}\t{}\t{}\t{}\n",
-            if player.is_paused() {
-                "paused"
-            } else {
-                "playing"
-            },
-            player.current_time().as_secs_f64(),
-            player
-                .duration()
-                .map(|value| value.as_secs_f64())
-                .unwrap_or(-1.0),
-            sanitize_remote_field(&details.title),
-            sanitize_remote_field(details.artist.as_deref().unwrap_or("")),
-            sanitize_remote_field(details.album.as_deref().unwrap_or("")),
-        );
-        let _ = self.updates_tx.send(line);
-    }
-}
-
-impl Drop for MediaRemoteClient {
-    fn drop(&mut self) {
-        let _ = self.updates_tx.send("QUIT\n".to_string());
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
+#[cfg(not(target_os = "macos"))]
+struct MediaRemoteClient;
 
 struct Player {
     files: Vec<PathBuf>,
@@ -443,7 +417,7 @@ fn run() -> Result<(), PlayerError> {
     render_startup_status(
         terminal.stdout(),
         &[
-            "shuffle",
+            APP_LABEL,
             "",
             &format!("Found {} mp3s", files.len()),
             "Starting audio output...",
@@ -454,18 +428,19 @@ fn run() -> Result<(), PlayerError> {
     render_startup_status(
         terminal.stdout(),
         &[
-            "shuffle",
+            APP_LABEL,
             "",
             &format!("Found {} mp3s", player.total_tracks()),
             "Connecting system media controls...",
         ],
     )?;
     let media_remote = start_media_remote_client();
+    log_media_event("media_remote_started");
 
     render_startup_status(
         terminal.stdout(),
         &[
-            "shuffle",
+            APP_LABEL,
             "",
             &format!("Found {} mp3s", player.total_tracks()),
             if persisted_state.is_some() {
@@ -486,7 +461,8 @@ fn run() -> Result<(), PlayerError> {
 
     save_persisted_state(&player.persisted_state());
     if let Some(client) = media_remote.as_ref() {
-        client.sync_state(&mut player);
+        client.sync_state(&player);
+        client.pump();
     }
     let mut last_state_save = Instant::now();
     let mut layout = render(&mut terminal, &mut player)?;
@@ -496,12 +472,17 @@ fn run() -> Result<(), PlayerError> {
             .as_ref()
             .and_then(|client| client.actions_rx.try_recv().ok())
         {
+            log_media_event(&format!("remote_action={}", control_action_name(action)));
             apply_control_action(&mut player, action)?;
             save_persisted_state(&player.persisted_state());
             if let Some(client) = media_remote.as_ref() {
-                client.sync_state(&mut player);
+                client.sync_state(&player);
             }
             last_state_save = Instant::now();
+        }
+
+        if let Some(client) = media_remote.as_ref() {
+            client.pump();
         }
 
         while event::poll(Duration::from_millis(100))
@@ -512,7 +493,7 @@ fn run() -> Result<(), PlayerError> {
                     KeyCode::Esc | KeyCode::Char('q') => {
                         save_persisted_state(&player.persisted_state());
                         if let Some(client) = media_remote.as_ref() {
-                            client.sync_state(&mut player);
+                            client.sync_state(&player);
                         }
                         player.shutdown();
                         return Ok(());
@@ -521,7 +502,7 @@ fn run() -> Result<(), PlayerError> {
                         apply_control_action(&mut player, ControlAction::TogglePause)?;
                         save_persisted_state(&player.persisted_state());
                         if let Some(client) = media_remote.as_ref() {
-                            client.sync_state(&mut player);
+                            client.sync_state(&player);
                         }
                         last_state_save = Instant::now();
                     }
@@ -529,7 +510,7 @@ fn run() -> Result<(), PlayerError> {
                         apply_control_action(&mut player, ControlAction::Previous)?;
                         save_persisted_state(&player.persisted_state());
                         if let Some(client) = media_remote.as_ref() {
-                            client.sync_state(&mut player);
+                            client.sync_state(&player);
                         }
                         last_state_save = Instant::now();
                     }
@@ -537,7 +518,7 @@ fn run() -> Result<(), PlayerError> {
                         apply_control_action(&mut player, ControlAction::Next)?;
                         save_persisted_state(&player.persisted_state());
                         if let Some(client) = media_remote.as_ref() {
-                            client.sync_state(&mut player);
+                            client.sync_state(&player);
                         }
                         last_state_save = Instant::now();
                     }
@@ -549,14 +530,14 @@ fn run() -> Result<(), PlayerError> {
                             apply_control_action(&mut player, ControlAction::Previous)?;
                             save_persisted_state(&player.persisted_state());
                             if let Some(client) = media_remote.as_ref() {
-                                client.sync_state(&mut player);
+                                client.sync_state(&player);
                             }
                             last_state_save = Instant::now();
                         } else if layout.next_button.contains(mouse.column, mouse.row) {
                             apply_control_action(&mut player, ControlAction::Next)?;
                             save_persisted_state(&player.persisted_state());
                             if let Some(client) = media_remote.as_ref() {
-                                client.sync_state(&mut player);
+                                client.sync_state(&player);
                             }
                             last_state_save = Instant::now();
                         }
@@ -571,18 +552,21 @@ fn run() -> Result<(), PlayerError> {
             apply_control_action(&mut player, ControlAction::Next)?;
             save_persisted_state(&player.persisted_state());
             if let Some(client) = media_remote.as_ref() {
-                client.sync_state(&mut player);
+                client.sync_state(&player);
             }
             last_state_save = Instant::now();
         } else if last_state_save.elapsed() >= Duration::from_secs(1) {
             save_persisted_state(&player.persisted_state());
             if let Some(client) = media_remote.as_ref() {
-                client.sync_state(&mut player);
+                client.sync_state(&player);
             }
             last_state_save = Instant::now();
         }
 
         layout = render(&mut terminal, &mut player)?;
+        if let Some(client) = media_remote.as_ref() {
+            client.pump();
+        }
         thread::sleep(Duration::from_millis(16));
     }
 }
@@ -606,101 +590,38 @@ fn apply_control_action(player: &mut Player, action: ControlAction) -> Result<()
     }
 }
 
-#[cfg(target_os = "macos")]
-fn start_media_remote_client() -> Option<MediaRemoteClient> {
-    let helper_path = media_remote_helper_path()?;
-    let mut child = Command::new(helper_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .ok()?;
+fn control_action_name(action: ControlAction) -> &'static str {
+    match action {
+        ControlAction::Play => "play",
+        ControlAction::Pause => "pause",
+        ControlAction::TogglePause => "toggle",
+        ControlAction::Previous => "previous",
+        ControlAction::Next => "next",
+    }
+}
 
-    let child_stdin = child.stdin.take()?;
-    let child_stdout = child.stdout.take()?;
+fn log_media_event(message: &str) {
+    let Some(path) = media_events_log_path() else {
+        return;
+    };
 
-    let (updates_tx, updates_rx) = mpsc::channel::<String>();
-    let (actions_tx, actions_rx) = mpsc::channel::<ControlAction>();
+    let line = format!("{message}\n");
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(line.as_bytes()));
+}
 
-    thread::spawn(move || {
-        let mut writer = child_stdin;
-        while let Ok(message) = updates_rx.recv() {
-            if writer.write_all(message.as_bytes()).is_err() {
-                break;
-            }
-            if writer.flush().is_err() {
-                break;
-            }
-        }
-    });
-
-    thread::spawn(move || {
-        let mut reader = std::io::BufReader::new(child_stdout);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let Ok(bytes_read) = std::io::BufRead::read_line(&mut reader, &mut line) else {
-                break;
-            };
-            if bytes_read == 0 {
-                break;
-            }
-            let action = match line.trim() {
-                "play" => Some(ControlAction::Play),
-                "pause" => Some(ControlAction::Pause),
-                "toggle" => Some(ControlAction::TogglePause),
-                "next" => Some(ControlAction::Next),
-                "previous" => Some(ControlAction::Previous),
-                _ => None,
-            };
-            if let Some(action) = action {
-                let _ = actions_tx.send(action);
-            }
-        }
-    });
-
-    Some(MediaRemoteClient {
-        updates_tx,
-        actions_rx,
-        child,
-    })
+fn media_events_log_path() -> Option<&'static PathBuf> {
+    MEDIA_EVENTS_LOG
+        .get_or_init(|| env::var_os("SHUFFLE_MEDIA_EVENTS_LOG").map(PathBuf::from))
+        .as_ref()
 }
 
 #[cfg(not(target_os = "macos"))]
 fn start_media_remote_client() -> Option<MediaRemoteClient> {
     None
-}
-
-#[cfg(target_os = "macos")]
-fn media_remote_helper_path() -> Option<PathBuf> {
-    if let Some(packaged_path) = packaged_media_remote_helper_path() {
-        if packaged_path.exists() {
-            return Some(packaged_path);
-        }
-    }
-
-    let build_path = PathBuf::from(option_env!("SHUFFLE_MEDIA_HELPER")?);
-    build_path.exists().then_some(build_path)
-}
-
-#[cfg(target_os = "macos")]
-fn packaged_media_remote_helper_path() -> Option<PathBuf> {
-    let executable = env::current_exe().ok()?;
-    let bin_dir = executable.parent()?;
-    let prefix_dir = bin_dir.parent()?;
-    Some(prefix_dir.join("libexec").join("media_remote_helper"))
-}
-
-fn sanitize_remote_field(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if matches!(character, '\t' | '\n' | '\r') {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect()
 }
 
 fn resolve_input_files() -> Result<Vec<PathBuf>, PlayerError> {
@@ -917,7 +838,7 @@ fn render(terminal: &mut TerminalGuard, player: &mut Player) -> Result<RenderLay
 
     if width < 40 || height < 18 {
         let message = [
-            "shuffle",
+            APP_LABEL,
             "Resize terminal to at least 40x18",
             "q or esc quits",
         ];
@@ -1029,6 +950,7 @@ fn render(terminal: &mut TerminalGuard, player: &mut Player) -> Result<RenderLay
     for (offset, line) in lines.iter().enumerate() {
         draw_text(&mut canvas, start_row + offset, 0, &centered(line, width));
     }
+    draw_text(&mut canvas, 0, 0, APP_LABEL);
     let library_column = width.saturating_sub(library_label.chars().count());
     draw_text(&mut canvas, 0, library_column, &library_label);
 

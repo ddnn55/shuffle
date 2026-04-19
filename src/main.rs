@@ -2,9 +2,9 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Stdout, Write, stderr, stdout};
-use std::sync::OnceLock;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 

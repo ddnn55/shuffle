@@ -2,7 +2,7 @@ class Shuffle < Formula
   desc "Command-line MP3 player with shuffle playback and arrow-key controls"
   homepage "https://github.com/ddnn55/shuffle"
   url "file://#{File.expand_path("..", __dir__)}"
-  version "0.1.1"
+  version "0.1.2"
   sha256 :no_check
 
   depends_on "rust" => :build
